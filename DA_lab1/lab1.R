@@ -1,6 +1,11 @@
 library(psych) 
 library(ggplot2) 
 library(dplyr)
+library(sf)
+library(tmap)
+library(tidyverse)
+library(leaflet)
+library(geojsonio)
 
 
 #  дата считваем 
@@ -8,6 +13,7 @@ df <- read.csv("")
 
 --------------------------------------
 #Первий взгляд на изначальную таблицу df
+  
   
 #общее количество пропусков 
 sum(is.na(df))
@@ -20,18 +26,16 @@ summary(df)
 sapply(df, function (x) sum(is.na (x)))
 
 
-
-
-
-
-
-
+#Первий взгляд на изначальную таблицу df\
+--------------------------------------
+  
+  
 -------------------------------------------------------
 #Работа с таблицей new_df, преобработка, удаления данных
 --------------------------------------------------------
   
 # Новая таблица с столбцами которые потенциально подходят
-new_df <- subset(df, select =  c(regio1, regio2, baseRentRange, geo_plz , serviceCharge, yearConstructed, heatingType, telekomTvOffer, newlyConst, balcony, picturecount, pricetrend, totalRent , firingTypes, hasKitchen, cellar, livingSpace, geo_krs, condition, petsAllowed, lift, typeOfFlat, noRooms, floor, noRoomsRange, garden, date))
+new_df <- subset(df, select =  c(regio1, regio2, baseRentRange, geo_plz , serviceCharge, yearConstructed, heatingType, telekomTvOffer, newlyConst, balcony, picturecount, pricetrend, totalRent , firingTypes, hasKitchen, cellar, livingSpace, geo_krs, condition, petsAllowed, lift, typeOfFlat, noRooms, floor, garden, date))
 View(new_df)
 
 ---------------------
@@ -49,15 +53,20 @@ new_df %>% summarise(across(everything(), ~ mean(is.na(.)))) %>%
 
 # чистим пропуски
 # видалення стрік в таблиці по заданим колонкам де є НА
-new_df <- new_df[complete.cases(new_df$totalRent, new_df$typeOfFlat,new_df$pricetrend,new_df$condition,new_df$firingTypes ), ]
-# замна середнім
-new_df$serviceCharge <- ifelse(is.na(new_df$serviceCharge), mean(new_df$serviceCharge, na.rm = TRUE), new_df$serviceCharge)
+new_df <- new_df[complete.cases(new_df$totalRent, new_df$typeOfFlat,new_df$pricetrend,new_df$condition,new_df$firingTypes, new_df$floor ), ]
+# заміна середнім 
+means_by_type <- tapply(new_df$serviceCharge, new_df$typeOfFlat, mean, na.rm = TRUE)
+
+new_df$serviceCharge <- ifelse(is.na(new_df$serviceCharge) & !is.na(new_df$typeOfFlat),
+                               means_by_type[new_df$typeOfFlat],
+                               new_df$serviceCharge)
+
 # заміна найбільш часто зустрічающимся елементом 
 most_common <- names(which.max(table(new_df$telekomTvOffer)))
 new_df$telekomTvOffer <- ifelse(is.na(new_df$telekomTvOffer), most_common, new_df$telekomTvOffer)
 
 most_common <- names(which.max(table(new_df$heatingType)))
-new_df$telekomTvOffer <- ifelse(is.na(new_df$heatingType), most_common, new_df$heatingType)
+new_df$heatingType <- ifelse(is.na(new_df$heatingType), most_common, new_df$heatingType)
 # встановлення флагів
 new_df$petsAllowed <- ifelse(is.na(new_df$petsAllowed), "no information", new_df$petsAllowed)
 new_df$yearConstructed <- ifelse(is.na(new_df$yearConstructed), -1, new_df$yearConstructed)
@@ -111,19 +120,46 @@ hist(new_df$serviceCharge, breaks = 30, col = "blue", xlab = "Значения",
 #corr
 cor(new_df$serviceCharge, new_df$heatingCosts, use="pairwise.complete.obs")
 
+table(new_df$heatingType)
+
+
+table(new_df$yearConstructed[new_df$newlyConst == TRUE])
+
 ---
 
 ---
 # Заміна типів в колнках 
 # перетворюємо змінні char в factor
 new_df <- new_df %>% mutate(hasKitchen = as.factor(hasKitchen), heatingType  = as.factor(heatingType ),
-                            firingTypes  = as.factor(firingTypes ), typeOfFlat  = as.factor(typeOfFlat ) )
+                            firingTypes  = as.factor(firingTypes ), typeOfFlat  = as.factor(typeOfFlat ),as.factor(telekomTvOffer ) )
 
-df$column <- as.integer(df$column)
+new_df$serviceCharge <- as.integer(new_df$serviceCharge)
 ---
   
 ---
-# Правільність вводу данних
+# Правільність вводу данних та можливі помилки в них 
+table(new_df$floor)
+str(new_df)
+summary(new_df)
+
+---
+# Доповнені змінні в данних
+#робимо з років фактор 
+new_df$yearConstructed_factor <- cut(new_df$yearConstructed, 
+                    breaks = c(-1, 1930, 2000, 2015, 2022),
+                    labels = c("very old", "old", "relatively new", "total new")) 
+table(new_df$yearConstructed_factor)
+---
+
+---
+#Викиди
+  
+  
+
+  
+  
+---
+
 
 
 -------------------------------------------------------
@@ -271,6 +307,28 @@ table(new_df$serviceCharge)
 new_df <- new_df[new_df$serviceCharge <= new_df$totalRent, ]
 ---
 
+#noRooms
+ggplot(new_df, aes(x = typeOfFlat, y = log(noRooms))) +
+geom_boxplot(aes(fill=names(new_df$typeOfFlat))) +
+labs(x = "typeOfFlat", y = "noRooms") +
+theme(axis.title = element_text(size = 25),
+      axis.text = element_text(size = 20))
+
+new_df %>%
+  group_by(typeOfFlat) %>%
+  summarize(percent_outliers = mean(noRooms < lower | noRooms > upper, na.rm = TRUE) * 100)
+
+# округляем
+new_df$noRooms <- round(new_df$noRooms, 0)
+
+
+table(new_df$noRooms)
+
+#удаляем якній викид
+new_df[new_df$noRooms == 100]
+new_df <- new_df[new_df$noRooms != 100,]
+
+  
 # ВИкиди \
 -------------------------------------
 
@@ -280,6 +338,28 @@ new_df <- new_df[new_df$serviceCharge <= new_df$totalRent, ]
 #табица всех вібросов по тайп флоат 
 
 
+  
+  
+  
+  
+
+# Munich
+munich_map <- st_read("munich_map.shp")
+
+# расчет средней арендной платы по почтовым индексам
+total_rent_avg_by_plz <- aggregate(dat$totalRent, by=list(geo_plz=dat$geo_plz), mean)
+names(total_rent_avg_by_plz) <- c("geo_plz", "totalRent")
+
+# присоединение геоданных к данным по арендной плате
+gdat_total_rent_avg_by_plz <- st_as_sf(total_rent_avg_by_plz, coords=c("X", "Y"), crs=st_crs(munich_map))
+gdat_total_rent_avg_by_plz <- st_join(gdat_total_rent_avg_by_plz, munich_map)
+
+# создание карты
+ggplot() + 
+  geom_sf(data = gdat_total_rent_avg_by_plz, aes(fill = totalRent)) +
+  scale_fill_gradient(low = "white", high = "red", name="Average rent (€)") +
+  labs(title = "Average rent in Munich (€)") +
+  theme_void()
 
 ---------------------------------------------------------------
 #E
@@ -290,8 +370,24 @@ new_df <- new_df[new_df$serviceCharge <= new_df$totalRent, ]
   
   
   
+munich_map <- geojson_read("munich_plz.geojson", what = "sp")
+munich_map <- st_read("munich_plz.geojson")
+new_df <- read.csv("munich_apartment_data.csv")
 
-  
+# подсчет средней цены аренды по индексу
+total_rent_avg_by_plz <- aggregate(new_df$totalRent, by = list(new_df$geo_plz), mean)
+colnames(total_rent_avg_by_plz) <- c("geo_plz", "totalRent")
+
+# соединение данных и карты
+gdat_total_rent_avg_by_plz <- merge(munich_map, total_rent_avg_by_plz, by.x = "plz", by.y = "geo_plz")
+
+# построение графика
+ggplot() + 
+  geom_sf(data = gdat_total_rent_avg_by_plz, aes(fill = totalRent)) +
+  scale_fill_gradientn(name = "Average rent (€)", colors = rev(brewer.pal(9, "OrRd"))) +
+  geom_text(data = gdat_total_rent_avg_by_plz, aes(label = plz, x = st_coordinates(geometry)[, 1] - 0.01, y = st_coordinates(geometry)[, 2]), size = 2) +
+  labs(title = "Average rent in Munich (€)", x = "", y = "") +
+  theme_void()
   
   
   
